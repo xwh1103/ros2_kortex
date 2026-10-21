@@ -22,6 +22,7 @@
  */
 //----------------------------------------------------------------------
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <exception>
@@ -625,6 +626,8 @@ return_type KortexMultiInterfaceHardware::perform_command_mode_switch(
     twist_controller_running_ = false;
     arm_commands_positions_ = arm_positions_;
     arm_commands_velocities_ = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    sent_positions_ = arm_positions_;
+    resetCommandSegment();
     joint_based_controller_running_ = true;
     // refresh feedback
     feedback_ = base_cyclic_.RefreshFeedback();
@@ -817,8 +820,9 @@ void KortexMultiInterfaceHardware::readGripperPosition()
 }
 
 return_type KortexMultiInterfaceHardware::write(
-  const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
+  const rclcpp::Time & /*time*/, const rclcpp::Duration & period)
 {
+  command_dt_ = std::max(period.seconds(), 1.0e-4);
   if (block_write)
   {
     feedback_ = base_cyclic_.RefreshFeedback();
@@ -928,18 +932,127 @@ return_type KortexMultiInterfaceHardware::write(
   return return_type::OK;
 }
 
-void KortexMultiInterfaceHardware::prepareCommands()
-{  // update the command for each joint
-  for (size_t i = 0; i < actuator_count_; i++)
+void KortexMultiInterfaceHardware::resetCommandSegment()
+{
+  if (sent_positions_.size() != actuator_count_)
   {
-    // set command per joint
-    cmd_degrees_tmp_ = static_cast<float>(
-      KortexMathUtil::wrapDegreesFromZeroTo360(KortexMathUtil::toDeg(arm_commands_positions_[i])));
-    cmd_vel_tmp_ = static_cast<float>(KortexMathUtil::toDeg(arm_commands_velocities_[i]));
+    sent_positions_ = arm_positions_;
+    sent_positions_.resize(actuator_count_, 0.0);
+  }
+  latched_command_.assign(actuator_count_, 0.0);
+  segment_start_.assign(actuator_count_, 0.0);
+  segment_goal_.assign(actuator_count_, 0.0);
+  for (size_t i = 0; i < actuator_count_; ++i)
+  {
+    const double current = KortexMathUtil::wrapRadiansFromMinusPiToPi(sent_positions_[i]);
+    sent_positions_[i] = current;
+    latched_command_[i] = current;
+    segment_start_[i] = current;
+    segment_goal_[i] = current;
+  }
+  segment_elapsed_ = 0.0;
+  segment_duration_ = 0.010;
+  // The next real setpoint uses one nominal teleop period, not the idle gap
+  // since the mode switch.
+  since_command_ = 0.010;
+}
 
+void KortexMultiInterfaceHardware::prepareCommands()
+{
+  // Teleop publishes a new joint target at ~100 Hz. Chasing it at URDF speed
+  // finishes in 1–2 ms and then holds, so the joint accelerates and stops on
+  // every IK tick. Spread each new target across the measured interval instead.
+  // Leave velocity at 0. Gen3 low-level servoing is position mode; a non-zero
+  // cyclic velocity makes the joint hold.
+  static const double kVelLimitRadS[] = {1.3963, 1.3963, 1.3963, 1.3963, 1.2218, 1.2218, 1.2218};
+  constexpr double kCmdEps = 1.0e-7;
+  constexpr double kNominalSegment = 0.010;
+  constexpr double kMaxSegment = 0.020;
+
+  if (
+    sent_positions_.size() != actuator_count_ || latched_command_.size() != actuator_count_ ||
+    segment_start_.size() != actuator_count_ || segment_goal_.size() != actuator_count_)
+  {
+    resetCommandSegment();
+  }
+
+  const double dt = std::max(command_dt_, 1.0e-4);
+  since_command_ += dt;
+
+  bool changed = false;
+  if (arm_commands_positions_.size() >= actuator_count_)
+  {
+    for (size_t i = 0; i < actuator_count_; ++i)
+    {
+      const double command =
+        KortexMathUtil::wrapRadiansFromMinusPiToPi(arm_commands_positions_[i]);
+      const double delta =
+        KortexMathUtil::wrapRadiansFromMinusPiToPi(command - latched_command_[i]);
+      if (std::fabs(delta) > kCmdEps)
+      {
+        changed = true;
+        break;
+      }
+    }
+  }
+
+  if (changed)
+  {
+    double duration = since_command_;
+    // Shorter than 0.5 ms is a 1 kHz controller: follow that interval.
+    // Longer than 20 ms is an idle gap: do not crawl across it.
+    if (duration < 5.0e-4 || duration > kMaxSegment)
+    {
+      duration = kNominalSegment;
+    }
+    segment_duration_ = duration;
+    segment_elapsed_ = 0.0;
+    for (size_t i = 0; i < actuator_count_; ++i)
+    {
+      segment_start_[i] = KortexMathUtil::wrapRadiansFromMinusPiToPi(sent_positions_[i]);
+      const double command =
+        KortexMathUtil::wrapRadiansFromMinusPiToPi(arm_commands_positions_[i]);
+      segment_goal_[i] = command;
+      latched_command_[i] = command;
+    }
+    since_command_ = 0.0;
+  }
+
+  segment_elapsed_ += dt;
+  double alpha = 1.0;
+  if (segment_duration_ > 1.0e-6)
+  {
+    alpha = segment_elapsed_ / segment_duration_;
+    if (alpha > 1.0)
+    {
+      alpha = 1.0;
+    }
+  }
+
+  for (size_t i = 0; i < actuator_count_; ++i)
+  {
+    const double delta =
+      KortexMathUtil::wrapRadiansFromMinusPiToPi(segment_goal_[i] - segment_start_[i]);
+    const double desired =
+      KortexMathUtil::wrapRadiansFromMinusPiToPi(segment_start_[i] + alpha * delta);
+    double current = KortexMathUtil::wrapRadiansFromMinusPiToPi(sent_positions_[i]);
+    double step = KortexMathUtil::wrapRadiansFromMinusPiToPi(desired - current);
+    const double vmax = kVelLimitRadS[i < 7 ? i : 6];
+    const double max_step = vmax * dt;
+    if (step > max_step)
+    {
+      step = max_step;
+    }
+    else if (step < -max_step)
+    {
+      step = -max_step;
+    }
+    current = KortexMathUtil::wrapRadiansFromMinusPiToPi(current + step);
+    sent_positions_[i] = current;
+    cmd_degrees_tmp_ = static_cast<float>(
+      KortexMathUtil::wrapDegreesFromZeroTo360(KortexMathUtil::toDeg(current)));
     base_command_.mutable_actuators(static_cast<int>(i))->set_position(cmd_degrees_tmp_);
-    // Velocity command interface not implemented properly in the kortex api
-    // base_command_.mutable_actuators(i)->set_velocity(cmd_vel_tmp_);
+    base_command_.mutable_actuators(static_cast<int>(i))->set_velocity(0.0f);
     base_command_.mutable_actuators(static_cast<int>(i))->set_command_id(base_command_.frame_id());
   }
 }

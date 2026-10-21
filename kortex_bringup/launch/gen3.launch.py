@@ -92,6 +92,13 @@ def generate_launch_description():
     )
     declared_arguments.append(
         DeclareLaunchArgument(
+            "gripper_com_port",
+            default_value="/dev/ttyUSB0",
+            description="Serial port of a Robotiq gripper when use_internal_bus_gripper_comm is false.",
+        )
+    )
+    declared_arguments.append(
+        DeclareLaunchArgument(
             "gripper_max_velocity",
             default_value="100.0",
             description="Max velocity for gripper commands",
@@ -107,6 +114,20 @@ def generate_launch_description():
     declared_arguments.append(
         DeclareLaunchArgument("launch_rviz", default_value="true", description="Launch RViz?")
     )
+    declared_arguments.append(
+        DeclareLaunchArgument(
+            "robot_description_topic",
+            default_value="/robot_description",
+            description="Topic that carries the Gen3 URDF for ros2_control.",
+        )
+    )
+    declared_arguments.append(
+        DeclareLaunchArgument(
+            "launch_fault_controller",
+            default_value="true",
+            description="Spawn the fault controller. It needs picknik_reset_fault_controller.",
+        )
+    )
 
     # Initialize Arguments
     robot_type = LaunchConfiguration("robot_type")
@@ -117,11 +138,14 @@ def generate_launch_description():
     robot_controller = LaunchConfiguration("robot_controller")
     gripper = LaunchConfiguration("gripper")
     use_internal_bus_gripper_comm = LaunchConfiguration("use_internal_bus_gripper_comm")
+    gripper_com_port = LaunchConfiguration("gripper_com_port")
     gripper_max_velocity = LaunchConfiguration("gripper_max_velocity")
     gripper_max_force = LaunchConfiguration("gripper_max_force")
     gripper_joint_name = LaunchConfiguration("gripper_joint_name")
     launch_rviz = LaunchConfiguration("launch_rviz")
     controllers_file = LaunchConfiguration("controllers_file")
+    robot_description_topic = LaunchConfiguration("robot_description_topic")
+    launch_fault_controller = LaunchConfiguration("launch_fault_controller")
 
     base_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([ThisLaunchFileDir(), "/kortex_control.launch.py"]),
@@ -134,12 +158,15 @@ def generate_launch_description():
             "robot_controller": robot_controller,
             "gripper": gripper,
             "use_internal_bus_gripper_comm": use_internal_bus_gripper_comm,
+            "gripper_com_port": gripper_com_port,
             "gripper_max_velocity": gripper_max_velocity,
             "gripper_max_force": gripper_max_force,
             "gripper_joint_name": gripper_joint_name,
             "launch_rviz": launch_rviz,
             "controllers_file": controllers_file,
             "description_file": "gen3.xacro",
+            "robot_description_topic": robot_description_topic,
+            "launch_fault_controller": launch_fault_controller,
         }.items(),
     )
 

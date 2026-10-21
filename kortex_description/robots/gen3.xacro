@@ -24,6 +24,7 @@
     <xacro:arg name="use_fake_hardware" default="false" />
     <xacro:arg name="fake_sensor_commands" default="false" />
     <xacro:arg name="use_internal_bus_gripper_comm" default="false" />
+    <xacro:arg name="gripper_com_port" default="/dev/ttyUSB0" />
     <xacro:arg name="use_external_cable" default="false" />
 
     <xacro:include filename="$(find kortex_description)/robots/kortex_robot.xacro" />
@@ -49,6 +50,7 @@
         session_inactivity_timeout_ms="$(arg session_inactivity_timeout_ms)"
         connection_inactivity_timeout_ms="$(arg connection_inactivity_timeout_ms)"
         use_internal_bus_gripper_comm="$(arg use_internal_bus_gripper_comm)"
+        gripper_com_port="$(arg gripper_com_port)"
         prefix="$(arg prefix)"
         use_fake_hardware="$(arg use_fake_hardware)"
         fake_sensor_commands="$(arg fake_sensor_commands)"

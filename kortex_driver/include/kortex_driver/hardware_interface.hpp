@@ -138,6 +138,18 @@ private:
   std::vector<double> arm_positions_;
   std::vector<double> arm_velocities_;
   std::vector<double> arm_efforts_;
+  // Last position actually sent on BaseCyclic. A new joint target is spread across the
+  // measured command period (~10 ms for 100 Hz teleop) so the 1 kHz cycle does not
+  // bang up to URDF speed and then coast. Cyclic velocity stays 0. A non-zero value
+  // makes the joint hold in position mode.
+  std::vector<double> sent_positions_;
+  std::vector<double> latched_command_;
+  std::vector<double> segment_start_;
+  std::vector<double> segment_goal_;
+  double segment_elapsed_ = 0.0;
+  double segment_duration_ = 0.010;
+  double since_command_ = 0.010;
+  double command_dt_ = 0.001;
 
   // twist command interfaces
   std::vector<double> twist_commands_;
@@ -217,6 +229,7 @@ private:
   void incrementId();
   void sendJointCommands();
   void prepareCommands();
+  void resetCommandSegment();
   void sendGripperCommand(
     k_api::Base::ServoingMode arm_mode, double position, double velocity, double force);
 
