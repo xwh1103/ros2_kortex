@@ -965,7 +965,9 @@ void KortexMultiInterfaceHardware::prepareCommands()
   // Leave velocity at 0. Gen3 low-level servoing is position mode; a non-zero
   // cyclic velocity makes the joint hold.
   static const double kVelLimitRadS[] = {1.3963, 1.3963, 1.3963, 1.3963, 1.2218, 1.2218, 1.2218};
-  constexpr double kCmdEps = 1.0e-7;
+  // Ignore encoder-scale chatter so a held setpoint does not start a new
+  // 10 ms segment every cycle. 5e-4 rad is ~0.03 deg.
+  constexpr double kCmdEps = 5.0e-4;
   constexpr double kNominalSegment = 0.010;
   constexpr double kMaxSegment = 0.020;
 
